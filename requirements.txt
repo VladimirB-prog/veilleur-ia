@@ -1,0 +1,5 @@
+anthropic>=0.50.0
+feedparser>=6.0.0
+python-telegram-bot>=22.0
+python-dotenv>=1.0.0
+tenacity>=9.0.0

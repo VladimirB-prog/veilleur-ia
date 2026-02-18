@@ -1,0 +1,15 @@
+# Secrets — JAMAIS commiter
+.env
+
+# Données locales générées automatiquement
+feedback_history.json
+rapports/
+
+# Python
+venv/
+__pycache__/
+*.pyc
+*.log
+
+# macOS
+.DS_Store
