@@ -659,7 +659,6 @@ RÈGLES ABSOLUES :
                 await bot.send_message(
                     chat_id=chat_id,
                     text=chunk,
-                    parse_mode="Markdown",
                 )
 
             logger.info(f"  ✅ Rapport envoyé Telegram ({len(chunks)} message(s))")
