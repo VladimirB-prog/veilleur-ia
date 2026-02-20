@@ -184,10 +184,11 @@ class VeilleurIA:
         self.test_mode = test_mode
         self.dry_run   = dry_run
 
-        # En mode test : Haiku partout, Extended Thinking désactivé
-        self.synthesis_model = MODEL_COLLECT if test_mode else MODEL_SYNTHESIS
+        # En mode test : Haiku pour collecte/redistribution, SONNET pour synthèse
+        # Haiku ne suit pas bien les prompts longs à 3 parties
+        self.synthesis_model = MODEL_SYNTHESIS  # Toujours Sonnet pour la synthèse
         self.collect_model   = MODEL_COLLECT
-        self.use_thinking    = not test_mode
+        self.use_thinking    = not test_mode    # Thinking off en test pour aller vite
 
         # Client Notion — initialisé seulement si token disponible
         self.notion = self._init_notion()
@@ -583,6 +584,100 @@ Format : ## Partie X — [Skill/composant ciblé]\n[3 étapes + commande test]\n
 
     # ─── Création page Notion ─────────────────────────────────────────────────
 
+    def _parse_content_to_blocks(self, content: str) -> list:
+        """
+        Parse le contenu Markdown en blocs Notion proprement.
+
+        Analogie TP :
+            Trier les matériaux avant de les ranger : béton avec béton,
+            ferraillage avec ferraillage. On ne mélange pas les types.
+
+        Le problème du split naïf sur '\\n\\n' :
+            Un bloc ```python\\ncode\\n``` contient des sauts de ligne
+            internes → le split le découpe en morceaux inutilisables.
+        Solution : on parse ligne par ligne avec un état (dans/hors code).
+        """
+        blocks = []
+        lines = content.split("\n")
+        i = 0
+
+        while i < len(lines):
+            line = lines[i]
+
+            # ── Bloc de code : on accumule jusqu'au ``` fermant ──────────
+            if line.strip().startswith("```"):
+                lang = line.strip().replace("```", "").strip() or "python"
+                code_lines = []
+                i += 1
+                while i < len(lines) and not lines[i].strip().startswith("```"):
+                    code_lines.append(lines[i])
+                    i += 1
+                code = "\n".join(code_lines).strip()
+                if code:
+                    # Découpe si > 1990 chars (limite Notion par bloc)
+                    for chunk in [code[j:j+1990] for j in range(0, len(code), 1990)]:
+                        blocks.append({
+                            "object": "block",
+                            "type":   "code",
+                            "code": {
+                                "rich_text": [{"type": "text", "text": {"content": chunk}}],
+                                "language":  lang if lang in [
+                                    "python", "javascript", "bash", "yaml",
+                                    "json", "markdown", "plain text"
+                                ] else "plain text",
+                            },
+                        })
+                i += 1  # saute le ``` fermant
+                continue
+
+            # ── Titre niveau 1 (#) ────────────────────────────────────────
+            if line.startswith("# ") and not line.startswith("## "):
+                blocks.append({
+                    "object": "block", "type": "heading_1",
+                    "heading_1": {"rich_text": [{"type": "text", "text": {
+                        "content": line.replace("# ", "")[:200]
+                    }}]},
+                })
+                i += 1
+                continue
+
+            # ── Titre niveau 2 (##) ───────────────────────────────────────
+            if line.startswith("## "):
+                blocks.append({
+                    "object": "block", "type": "heading_2",
+                    "heading_2": {"rich_text": [{"type": "text", "text": {
+                        "content": line.replace("## ", "")[:200]
+                    }}]},
+                })
+                i += 1
+                continue
+
+            # ── Titre niveau 3 (###) ──────────────────────────────────────
+            if line.startswith("### "):
+                blocks.append({
+                    "object": "block", "type": "heading_3",
+                    "heading_3": {"rich_text": [{"type": "text", "text": {
+                        "content": line.replace("### ", "")[:200]
+                    }}]},
+                })
+                i += 1
+                continue
+
+            # ── Ligne vide → on skippe ────────────────────────────────────
+            if not line.strip():
+                i += 1
+                continue
+
+            # ── Paragraphe standard ───────────────────────────────────────
+            for chunk in [line[j:j+1990] for j in range(0, len(line), 1990)]:
+                blocks.append({
+                    "object": "block", "type": "paragraph",
+                    "paragraph": {"rich_text": [{"type": "text", "text": {"content": chunk}}]},
+                })
+            i += 1
+
+        return blocks
+
     def create_notion_page(
         self,
         database_id: str,
@@ -663,7 +758,7 @@ Format : ## Partie X — [Skill/composant ciblé]\n[3 étapes + commande test]\n
                 properties={
                     "title": {"title": [{"text": {"content": title}}]}
                 },
-                children=content_blocks[:100],
+                children=self._parse_content_to_blocks(content)[:100],
             )
             url = page.get("url", "")
             logger.info(f"  ✅ Notion page créée : {title} → {url}")
