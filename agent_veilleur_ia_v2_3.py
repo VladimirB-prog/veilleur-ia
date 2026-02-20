@@ -575,7 +575,7 @@ Format : ## Partie X — [Skill/composant ciblé]\n[3 étapes + commande test]\n
 
         response = self.client.messages.create(
             model=self.collect_model,
-            max_tokens=3000,
+            max_tokens=6000,
             messages=[{"role": "user", "content":
                 f"{instructions[section]}\n\nRAPPORT COMPLET :\n{report[:40000]}"
             }],
