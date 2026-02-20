@@ -577,7 +577,7 @@ Format : ## Partie X — [Skill/composant ciblé]\n[3 étapes + commande test]\n
             model=self.collect_model,
             max_tokens=3000,
             messages=[{"role": "user", "content":
-                f"{instructions[section]}\n\nRAPPORT COMPLET :\n{report[:8000]}"
+                f"{instructions[section]}\n\nRAPPORT COMPLET :\n{report[:40000]}"
             }],
         )
         return response.content[0].text
