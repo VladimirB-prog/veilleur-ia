@@ -591,16 +591,16 @@ Format : ## Partie X — [Skill/composant ciblé]\n[3 étapes + commande test]\n
         categorie:   Optional[str] = None,
     ) -> Optional[str]:
         """
-        Crée une page dans une base de données Notion.
+        Crée une sous-page dans une page Notion parente.
 
         Analogie TP :
-            Ajouter une fiche dans le bon classeur avec le bon onglet.
+            Ajouter une feuille dans le bon classeur avec le bon onglet.
 
         Args:
-            database_id : ID de la base Notion cible
+            database_id : ID de la page Notion parente
             title       : Titre de la page
             content     : Contenu Markdown à insérer
-            categorie   : Tag de catégorie (Agentique/OpenClaw/Skills Claude)
+            categorie   : Non utilisé (pages simples)
 
         Returns:
             URL de la page créée, ou None si erreur
@@ -610,24 +610,15 @@ Format : ## Partie X — [Skill/composant ciblé]\n[3 étapes + commande test]\n
             return None
 
         try:
-            # Construction des propriétés de la page
-            properties: dict = {
-                "Titre": {"title": [{"text": {"content": title}}]},
-                "Date":  {"date":  {"start": datetime.now().strftime("%Y-%m-%d")}},
-            }
-            if categorie:
-                properties["Catégorie"] = {"select": {"name": categorie}}
-
-            # Découpage du contenu en blocs Notion (max 2000 chars par bloc)
-            # Notion a une limite de taille par bloc de texte
+            # Découpage du contenu en blocs Notion
             content_blocks = []
             for paragraph in content.split("\n\n"):
                 if not paragraph.strip():
                     continue
-                # Bloc code si la ligne commence par ```
+                # Bloc code si commence par ```
                 if paragraph.strip().startswith("```"):
-                    lang   = paragraph.split("\n")[0].replace("```", "").strip() or "python"
-                    code   = "\n".join(paragraph.split("\n")[1:]).rstrip("```").strip()
+                    lang = paragraph.split("\n")[0].replace("```", "").strip() or "python"
+                    code = "\n".join(paragraph.split("\n")[1:]).rstrip("`").strip()
                     content_blocks.append({
                         "object": "block",
                         "type":   "code",
@@ -636,7 +627,6 @@ Format : ## Partie X — [Skill/composant ciblé]\n[3 étapes + commande test]\n
                             "language":  lang,
                         },
                     })
-                # Titre si commence par ##
                 elif paragraph.startswith("## "):
                     content_blocks.append({
                         "object": "block",
@@ -647,7 +637,6 @@ Format : ## Partie X — [Skill/composant ciblé]\n[3 étapes + commande test]\n
                             }}]
                         },
                     })
-                # Titre si commence par ###
                 elif paragraph.startswith("### "):
                     content_blocks.append({
                         "object": "block",
@@ -658,9 +647,7 @@ Format : ## Partie X — [Skill/composant ciblé]\n[3 étapes + commande test]\n
                             }}]
                         },
                     })
-                # Paragraphe standard
                 else:
-                    # Découpe si trop long (limite Notion = 2000 chars)
                     for chunk in [paragraph[i:i+1990] for i in range(0, len(paragraph), 1990)]:
                         content_blocks.append({
                             "object": "block",
@@ -670,11 +657,13 @@ Format : ## Partie X — [Skill/composant ciblé]\n[3 étapes + commande test]\n
                             },
                         })
 
-            # Création de la page via API Notion
+            # Création sous-page avec parent = page_id (pas database_id)
             page = self.notion.pages.create(
-                parent={"database_id": database_id},
-                properties=properties,
-                children=content_blocks[:100],  # Notion limite à 100 blocs par appel
+                parent={"page_id": database_id},
+                properties={
+                    "title": {"title": [{"text": {"content": title}}]}
+                },
+                children=content_blocks[:100],
             )
             url = page.get("url", "")
             logger.info(f"  ✅ Notion page créée : {title} → {url}")
