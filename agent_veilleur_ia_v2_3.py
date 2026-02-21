@@ -763,15 +763,27 @@ RÈGLES ABSOLUES :
                             },
                         })
 
-            # Création sous-page avec parent = page_id (pas database_id)
+            # Création de la page avec les 100 premiers blocs
+            all_blocks = self._parse_content_to_blocks(content)
             page = self.notion.pages.create(
                 parent={"page_id": database_id},
                 properties={
                     "title": {"title": [{"text": {"content": title}}]}
                 },
-                children=self._parse_content_to_blocks(content)[:100],
+                children=all_blocks[:100],
             )
-            url = page.get("url", "")
+            page_id = page.get("id", "")
+            url     = page.get("url", "")
+
+            # Append les blocs restants par batch de 100
+            # Notion limite à 100 blocs par appel API
+            remaining = all_blocks[100:]
+            while remaining:
+                self.notion.blocks.children.append(
+                    block_id=page_id,
+                    children=remaining[:100],
+                )
+                remaining = remaining[100:]
             logger.info(f"  ✅ Notion page créée : {title} → {url}")
             return url
 
