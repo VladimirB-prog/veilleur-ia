@@ -551,36 +551,47 @@ RÈGLES ABSOLUES :
     def extract_for_notion(self, report: str, section: str) -> str:
         """
         Haiku extrait une section spécifique du rapport pour Notion.
+        Appel par partie (1, 2, 3) pour éviter les troncatures.
 
         Analogie TP :
-            L'assistant qui photocopie uniquement les pages pertinentes
-            du rapport complet pour les classer dans les bons classeurs.
-
-        Args:
-            report  : Rapport complet généré par Sonnet
-            section : "pedagogie", "systeme" ou "mise_en_place"
-
-        Returns:
-            Contenu extrait et formaté pour Notion
+            Au lieu de photocopier tout le rapport en une fois,
+            on photocopie cahier par cahier — plus fiable.
         """
         instructions = {
-            "pedagogie": """Extrais UNIQUEMENT toutes les sections 🎓 Pédagogie des 3 parties.
-Format : ## Partie X — [Titre concept]\n[contenu pédagogie]\n\n""",
-            "systeme": """Extrais UNIQUEMENT toutes les sections ⚙️ Système des 3 parties.
-Garde tous les blocs de code intacts avec leur syntaxe.
-Format : ## Partie X — [Titre]\n[contenu système avec code]\n\n""",
-            "mise_en_place": """Extrais UNIQUEMENT toutes les sections 🔗 Mise en place des 3 parties.
-Format : ## Partie X — [Skill/composant ciblé]\n[3 étapes + commande test]\n\n""",
+            "pedagogie": "Extrais UNIQUEMENT la section 🎓 Pédagogie de la PARTIE {partie}. Garde le contenu intégral avec tous les blocs de code.",
+            "systeme":   "Extrais UNIQUEMENT la section ⚙️ Système de la PARTIE {partie}. Garde tous les blocs de code intacts.",
+            "mise_en_place": "Extrais UNIQUEMENT la section 🔗 Mise en place de la PARTIE {partie}. Garde les 3 étapes et la commande de validation.",
         }
 
-        response = self.client.messages.create(
-            model=self.collect_model,
-            max_tokens=6000,
-            messages=[{"role": "user", "content":
-                f"{instructions[section]}\n\nRAPPORT COMPLET :\n{report[:40000]}"
-            }],
-        )
-        return response.content[0].text
+        # Découper le rapport en 3 parties pour cibler l'extraction
+        parties_labels = {
+            1: ("PARTIE 1", "PARTIE 2"),
+            2: ("PARTIE 2", "PARTIE 3"),
+            3: ("PARTIE 3", "INSIGHT DU JOUR"),
+        }
+
+        full_content = []
+
+        for num_partie, (start_marker, end_marker) in parties_labels.items():
+            # Extraire le segment de la partie depuis le rapport complet
+            start_idx = report.find(start_marker)
+            end_idx   = report.find(end_marker, start_idx + 1) if end_marker in report[start_idx+1:] else len(report)
+            segment   = report[start_idx:end_idx] if start_idx != -1 else ""
+
+            if not segment.strip():
+                continue
+
+            response = self.client.messages.create(
+                model=self.collect_model,
+                max_tokens=2000,
+                messages=[{"role": "user", "content":
+                    f"{instructions[section].format(partie=num_partie)}\n\n"
+                    f"SEGMENT PARTIE {num_partie} :\n{segment[:15000]}"
+                }],
+            )
+            full_content.append(f"## Partie {num_partie}\n\n{response.content[0].text}")
+
+        return "\n\n---\n\n".join(full_content) or "Extraction vide."
 
     # ─── Création page Notion ─────────────────────────────────────────────────
 
