@@ -433,7 +433,7 @@ Structure OBLIGATOIRE :
 **Analogie BTP** : cas concret chantier/TP
 **Mécanisme** : comment ça marche sous le capot
 **Code** : bloc Python 15-25 lignes, commentaires PAR BLOC (pas ligne par ligne)
-**Impact stack** : connexion directe stack V1.0 ou use case SRC
+**Application** : soit connexion stack V1.0 existante, soit un NOUVEL agent/pattern à construire from scratch — privilégier la nouveauté si le concept s'y prête
 **Ressources** : 1-2 liens concrets
 
 ### ⚙️ Système (500-600 mots)
@@ -442,7 +442,7 @@ Config ou snippet COMPLET production-ready :
 **Code production-ready** : complet, commenté par bloc, gestion erreurs
 **Commandes exactes** : shell/CLI dans l'ordre
 **Paramètres critiques** : valeurs, pièges, defaults dangereux
-**Intégration V1.0** : comment brancher sur le Makefile/agents.yaml existant
+**Intégration** : soit branchement sur agents existants (Makefile/agents.yaml), soit architecture complète d'un NOUVEL agent — privilégier la nouveauté et la valeur pédagogique
 
 ### 🔗 Mise en place (200-300 mots)
 Bridge pédagogie → action concrète :
