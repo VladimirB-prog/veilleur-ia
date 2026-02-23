@@ -395,9 +395,9 @@ Format : 1. [SOURCE] Titre — impact en une phrase (5 max, triés par importanc
         Structure rapport v2.3 : 3 parties × (Info + Pédagogie + Système + Mise en place)
         Cible : 6000-7000 mots au total.
         """
-        today = datetime.now().strftime("%d/%m/%Y")
+today = datetime.now().strftime("%d/%m/%Y")
 
-prompt = f"""Tu es VeilleurIA v2.3, expert IA agentique. Rapport quotidien pour Vlad.
+        prompt = f"""Tu es VeilleurIA v2.3, expert IA agentique. Rapport quotidien pour Vlad.
 
 PROFIL : Conducteur de travaux TP → reconversion ingénieur IA agentique.
 CS50P validé + 275p ML + stack 13 agents en prod. Praticien, pas théoricien.
@@ -536,7 +536,7 @@ RÈGLES ABSOLUES :
         if self.use_thinking:
             params["thinking"] = {"type": "enabled", "budget_tokens": THINKING_BUDGET}
             logger.info(f"  🧠 Extended Thinking activé ({THINKING_BUDGET} tokens budget)")
-
+            
         response = self.client.messages.create(**params)
 
         # Extraire uniquement le texte final (pas les blocs thinking internes)
