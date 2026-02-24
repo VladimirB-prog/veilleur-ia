@@ -454,7 +454,7 @@ RÈGLES ABSOLUES :
 
         params: dict = {
             "model":      self.synthesis_model,
-            "max_tokens": 14000,
+            "max_tokens": 16000,
             "messages":   [{"role": "user", "content": prompt}],
         }
         if self.use_thinking:
