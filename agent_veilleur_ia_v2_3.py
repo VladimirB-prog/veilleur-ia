@@ -651,13 +651,26 @@ RÈGLES ABSOLUES :
             url     = page.get("url", "")
 
             # Append des blocs restants par batch de 100
-            remaining = all_blocks[100:]
+            # Notion limite à 100 blocs par appel — on boucle avec retry explicite
+            remaining  = all_blocks[100:]
+            batch_num  = 1
             while remaining:
-                self.notion.blocks.children.append(
-                    block_id = page_id,
-                    children = remaining[:100],
-                )
+                batch = remaining[:100]
+                for attempt in range(3):  # 3 tentatives par batch
+                    try:
+                        self.notion.blocks.children.append(
+                            block_id = page_id,
+                            children = batch,
+                        )
+                        logger.info(f"    📦 Batch {batch_num} envoyé ({len(batch)} blocs)")
+                        break
+                    except Exception as batch_err:
+                        logger.warning(f"    ⚠️  Batch {batch_num} tentative {attempt+1}/3 : {batch_err}")
+                        if attempt == 2:
+                            logger.error(f"    ❌ Batch {batch_num} abandonné après 3 tentatives")
+                        import time; time.sleep(2 ** attempt)
                 remaining = remaining[100:]
+                batch_num += 1
 
             logger.info(f"  ✅ Notion page créée : {title} → {url}")
             return url
