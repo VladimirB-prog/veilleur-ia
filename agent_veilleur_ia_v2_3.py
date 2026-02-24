@@ -8,56 +8,22 @@ Skill Claude natif — API Anthropic (claude-sonnet-4-6).
 NOUVEAUTÉS v2.3 vs v2.2 :
 
     ① Partie 3 — Skills Claude
-        Nouvelle section dédiée aux skills Claude, MCP, et leur application
-        directe à la stack personnelle. Sous-section "Mise en place" qui
-        fait le pont entre un concept pédagogique et son implémentation
-        concrète dans les skills existants.
-
-    ② Reddit RSS — 3 subreddits
-        r/LocalLLaMA, r/AIAgents, r/MachineLearning ajoutés comme sources
-        RSS natives (sans API, feedparser suffit). Signal terrain qui
-        complète les blogs officiels.
-
+    ② Reddit RSS — 3 subreddits (r/LocalLLaMA, r/AIAgents, r/MachineLearning)
     ③ Hub Notion — 4 destinations automatiques
-        Sonnet génère le rapport une seule fois.
-        Haiku redistribue ensuite vers 4 bases Notion :
-        - 📅 Rapports quotidiens  (1 page complète par jour)
-        - 🎓 Base Pédagogie       (1 entrée par concept, avec code coloré)
-        - ⚙️  Base Système         (1 entrée par snippet production-ready)
-        - 🔗 Mise en place        (1 entrée par action concrète identifiée)
-
-    ④ Telegram — notification courte
-        Plus de rapport brut sur Telegram. Juste :
-        "📋 Rapport du 18/02 prêt → [lien Notion direct]"
+    ④ Telegram — notification courte avec lien Notion
 
 Analogie TP :
-    v2.2 = le topographe qui dépose son rapport sur le bureau
-    v2.3 = le topographe qui dépose le rapport complet dans le classeur,
-           extrait les cotes critiques dans le carnet de bord,
-           colle les fiches techniques dans le cahier de références,
-           et envoie juste un SMS "rapport dispo, classeur bureau".
+    v2.3 = topographe qui dépose le rapport complet dans le classeur,
+           extrait les cotes critiques, et envoie juste un SMS "rapport dispo".
 
 Architecture v2.3 :
-    Cron 19h45
-        ↓
-    [1] Collecte RSS → Haiku (10 sources : 7 blogs + 3 Reddit)
-        ↓
-    [2] Recherche web → Sonnet 4.6 + web_search (12 requêtes : 3 parties)
-        ↓
-    [3] Passe critique → Haiku (filtre top 5 par partie, 3 parties)
-        ↓
-    [4] Synthèse rapport → Sonnet 4.6 + Extended Thinking (3 parties)
-        ↓
-    [5] Redistribution → Haiku × 4 (extrait → Notion bases dédiées)
-        ↓
-    [6] Notion API → création pages et entrées dans les 4 bases
-        ↓
-    [7] Telegram → notification courte avec lien Notion
+    Cron 19h45 → [1] RSS → [2] web_search → [3] critique → [4] synthèse
+              → [5] redistribution Notion → [6] Telegram
 
 Usage :
     python agent_veilleur_ia_v2_3.py              # Production complète
-    python agent_veilleur_ia_v2_3.py --test       # Haiku partout, thinking off
-    python agent_veilleur_ia_v2_3.py --dry-run    # Rapport terminal, pas Notion/Telegram
+    python agent_veilleur_ia_v2_3.py --test       # Thinking off, rapide
+    python agent_veilleur_ia_v2_3.py --dry-run    # Rapport terminal uniquement
     python agent_veilleur_ia_v2_3.py --feedback like "Super section Skills Claude"
 
 Requirements :
@@ -68,6 +34,7 @@ Version : 2.3.0
 """
 
 import argparse
+import asyncio
 import json
 import logging
 import os
@@ -81,7 +48,7 @@ from anthropic import Anthropic
 from dotenv import load_dotenv
 from tenacity import retry, stop_after_attempt, wait_exponential
 
-# ─── Logging ─────────────────────────────────────────────────────────────────
+# ─── Logging ──────────────────────────────────────────────────────────────────
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
@@ -95,28 +62,24 @@ logger = logging.getLogger(__name__)
 load_dotenv()
 
 # ─── Modèles ──────────────────────────────────────────────────────────────────
-# Analogie TP : chef de chantier (Sonnet) et équipe terrain (Haiku)
-MODEL_SYNTHESIS = "claude-sonnet-4-6"          # Synthèse + Extended Thinking
-MODEL_COLLECT   = "claude-haiku-4-5-20251001"  # Collecte, critique, redistribution
+MODEL_SYNTHESIS = "claude-sonnet-4-6"
+MODEL_COLLECT   = "claude-haiku-4-5-20251001"
 
-THINKING_BUDGET   = 3000   # Tokens de réflexion interne Sonnet 4.6
-FEEDBACK_FILE     = Path("feedback_history.json")
-LOCK_FILE         = Path("/tmp/veilleur_ia.lock")
-FEEDBACK_WINDOW   = 14     # Jours de feedback injectés dans le prompt
+THINKING_BUDGET = 3000
+FEEDBACK_FILE   = Path("feedback_history.json")
+LOCK_FILE       = Path("/tmp/veilleur_ia.lock")
+FEEDBACK_WINDOW = 14
 
 # ─── Sources RSS ──────────────────────────────────────────────────────────────
-
-# Blogs officiels — Tier 1
 RSS_AGENTIQUE = [
-    {"name": "Anthropic Blog",  "url": "https://www.anthropic.com/rss.xml",      "focus": "agentique"},
-    {"name": "LangChain Blog",  "url": "https://blog.langchain.dev/rss/",         "focus": "agentique"},
-    {"name": "Hugging Face",    "url": "https://huggingface.co/papers.rss",       "focus": "agentique"},
-    {"name": "The Rundown AI",  "url": "https://www.therundown.ai/feed",          "focus": "agentique"},
-    {"name": "Latent Space",    "url": "https://www.latent.space/feed",           "focus": "agentique"},
-    # ① NOUVEAU v2.3 — Reddit RSS (sans API, feedparser natif)
-    {"name": "r/LocalLLaMA",    "url": "https://www.reddit.com/r/LocalLLaMA/.rss",        "focus": "agentique"},
-    {"name": "r/AIAgents",      "url": "https://www.reddit.com/r/AIAgents/.rss",          "focus": "agentique"},
-    {"name": "r/MachineLearning","url": "https://www.reddit.com/r/MachineLearning/.rss",  "focus": "agentique"},
+    {"name": "Anthropic Blog",    "url": "https://www.anthropic.com/rss.xml",                      "focus": "agentique"},
+    {"name": "LangChain Blog",    "url": "https://blog.langchain.dev/rss/",                         "focus": "agentique"},
+    {"name": "Hugging Face",      "url": "https://huggingface.co/papers.rss",                       "focus": "agentique"},
+    {"name": "The Rundown AI",    "url": "https://www.therundown.ai/feed",                          "focus": "agentique"},
+    {"name": "Latent Space",      "url": "https://www.latent.space/feed",                           "focus": "agentique"},
+    {"name": "r/LocalLLaMA",      "url": "https://www.reddit.com/r/LocalLLaMA/.rss",                "focus": "agentique"},
+    {"name": "r/AIAgents",        "url": "https://www.reddit.com/r/AIAgents/.rss",                  "focus": "agentique"},
+    {"name": "r/MachineLearning", "url": "https://www.reddit.com/r/MachineLearning/.rss",           "focus": "agentique"},
 ]
 
 RSS_OPENCLAW = [
@@ -124,15 +87,12 @@ RSS_OPENCLAW = [
     {"name": "OpenClaw Discussions", "url": "https://github.com/openclaw/openclaw/discussions.atom", "focus": "openclaw"},
 ]
 
-# ② NOUVEAU v2.3 — Sources Skills Claude
 RSS_SKILLS_CLAUDE = [
-    {"name": "Anthropic Blog",       "url": "https://www.anthropic.com/rss.xml",      "focus": "skills"},
-    {"name": "r/ClaudeAI",           "url": "https://www.reddit.com/r/ClaudeAI/.rss", "focus": "skills"},
+    {"name": "Anthropic Blog", "url": "https://www.anthropic.com/rss.xml",      "focus": "skills"},
+    {"name": "r/ClaudeAI",     "url": "https://www.reddit.com/r/ClaudeAI/.rss", "focus": "skills"},
 ]
 
 # ─── Requêtes web_search ──────────────────────────────────────────────────────
-# 12 requêtes au total (4 par partie)
-
 QUERIES_AGENTIQUE = [
     "agentic AI framework news today 2026",
     "LangGraph CrewAI AutoGen new release 2026",
@@ -148,35 +108,23 @@ QUERIES_OPENCLAW = [
     "ClawHub AgentSkill new release security 2026",
 ]
 
-# ② NOUVEAU v2.3 — Requêtes Skills Claude
 QUERIES_SKILLS_CLAUDE = [
     "Claude skill MCP tool new release 2026",
     "Anthropic Claude API new feature update 2026",
     "Claude skill builder best practices production 2026",
 ]
 
-# ─── IDs Notion (à remplir après création des pages) ─────────────────────────
-# Pour récupérer un ID Notion : ouvrir la page → "..." → "Copy link"
-# L'ID est la suite de chiffres/lettres à la fin de l'URL (32 caractères)
-NOTION_DB_RAPPORTS   = os.getenv("NOTION_DB_RAPPORTS_ID", "")    # 📅 Rapports quotidiens
-NOTION_DB_PEDAGOGIE  = os.getenv("NOTION_DB_PEDAGOGIE_ID", "")   # 🎓 Base Pédagogie
-NOTION_DB_SYSTEME    = os.getenv("NOTION_DB_SYSTEME_ID", "")     # ⚙️  Base Système
-NOTION_DB_MISE_EN_PLACE = os.getenv("NOTION_DB_MISE_EN_PLACE_ID", "")  # 🔗 Mise en place
+# ─── IDs Notion ───────────────────────────────────────────────────────────────
+NOTION_DB_RAPPORTS      = os.getenv("NOTION_DB_RAPPORTS_ID", "")
+NOTION_DB_PEDAGOGIE     = os.getenv("NOTION_DB_PEDAGOGIE_ID", "")
+NOTION_DB_SYSTEME       = os.getenv("NOTION_DB_SYSTEME_ID", "")
+NOTION_DB_MISE_EN_PLACE = os.getenv("NOTION_DB_MISE_EN_PLACE_ID", "")
 
 
 # ─── Classe principale ────────────────────────────────────────────────────────
 
 class VeilleurIA:
-    """
-    Agent de veille IA agentique v2.3 — Hub Notion + 3 parties.
-
-    Analogie TP :
-        L'équipe complète de topographie + archivage :
-        - Haiku = ouvriers collecte, tri, redistribution
-        - Sonnet 4.6 + Thinking = chef de chantier qui rédige
-        - Notion = le classeur de chantier structuré
-        - Telegram = le SMS de notification au maître d'ouvrage
-    """
+    """Agent de veille IA agentique v2.3 — Hub Notion + 3 parties."""
 
     def __init__(self, test_mode: bool = False, dry_run: bool = False) -> None:
         self._check_env()
@@ -184,13 +132,11 @@ class VeilleurIA:
         self.test_mode = test_mode
         self.dry_run   = dry_run
 
-        # En mode test : Haiku pour collecte/redistribution, SONNET pour synthèse
-        # Haiku ne suit pas bien les prompts longs à 3 parties
-        self.synthesis_model = MODEL_SYNTHESIS  # Toujours Sonnet pour la synthèse
+        # Sonnet toujours pour la synthèse — Haiku ne suit pas les prompts longs
+        self.synthesis_model = MODEL_SYNTHESIS
         self.collect_model   = MODEL_COLLECT
-        self.use_thinking    = not test_mode    # Thinking off en test pour aller vite
+        self.use_thinking    = not test_mode  # Thinking off en test pour aller vite
 
-        # Client Notion — initialisé seulement si token disponible
         self.notion = self._init_notion()
 
         logger.info(
@@ -209,8 +155,7 @@ class VeilleurIA:
         """
         Initialise le client Notion si le token est disponible.
 
-        Analogie TP : Vérifier qu'on a bien le badge d'accès au classeur
-        avant d'essayer de l'ouvrir.
+        Analogie TP : Vérifier qu'on a bien le badge d'accès au classeur.
         """
         token = os.getenv("NOTION_TOKEN")
         if not token:
@@ -232,11 +177,9 @@ class VeilleurIA:
 
     def collect_rss(self, sources: list[dict], max_hours: int = 24) -> list[dict]:
         """
-        Collecte les entrées RSS des dernières N heures depuis toutes les sources.
+        Collecte les entrées RSS des dernières N heures.
 
-        Analogie TP :
-            Ramasser les feuilles de pointage de chaque corps de métier
-            déposées depuis hier matin — sans les lire, juste les ramasser.
+        Analogie TP : Ramasser les feuilles de pointage depuis hier matin.
         """
         entries = []
         cutoff  = datetime.now() - timedelta(hours=max_hours)
@@ -246,8 +189,7 @@ class VeilleurIA:
                 logger.info(f"  📡 {source['name']}")
                 feed = feedparser.parse(
                     source["url"],
-                    # Header user-agent pour Reddit (bloque les bots sans header)
-                    request_headers={"User-Agent": "VeilleurIA/2.3 (veille IA agentique)"}
+                    request_headers={"User-Agent": "VeilleurIA/2.3 (veille IA agentique)"},
                 )
                 for entry in feed.entries[:8]:
                     pub = None
@@ -274,11 +216,9 @@ class VeilleurIA:
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(min=2, max=10))
     def summarize_rss(self, entries: list[dict], focus: str) -> str:
         """
-        Résume les entrées RSS brutes via Haiku (déblaiement mécanique).
+        Résume les entrées RSS brutes via Haiku.
 
-        Analogie TP :
-            L'ouvrier qui retranscrit les cotes brutes sur son carnet :
-            travail mécanique, pas de jugement requis.
+        Analogie TP : L'ouvrier qui retranscrit les cotes brutes — travail mécanique.
         """
         if not entries:
             return f"Aucune entrée RSS récente pour {focus}."
@@ -303,9 +243,7 @@ class VeilleurIA:
         """
         Recherche web via Sonnet 4.6 + outil web_search natif.
 
-        Analogie TP :
-            Le topographe senior avec sa station totale : il fait ses propres
-            relevés terrain, ne se contente pas de copier les plans existants.
+        Analogie TP : Le topographe senior avec sa station totale.
         """
         logger.info(f"  🔍 {len(queries)} requêtes web ({focus})")
         queries_fmt = "\n".join(f"{i+1}. {q}" for i, q in enumerate(queries))
@@ -329,9 +267,7 @@ Identifie : annonces majeures, releases, discussions importantes, sources (URLs)
         """
         Filtre Haiku : extrait le top 5 informations les plus importantes.
 
-        Analogie TP :
-            Avant de présenter au maître d'ouvrage, l'assistant trie les
-            50 relevés et ne garde que les 5 cotes critiques pour la décision.
+        Analogie TP : L'assistant qui trie 50 relevés et garde les 5 cotes critiques.
         """
         logger.info(f"  🎯 Passe critique ({focus})")
         response = self.client.messages.create(
@@ -379,29 +315,26 @@ Format : 1. [SOURCE] Titre — impact en une phrase (5 max, triés par importanc
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(min=2, max=10))
     def generate_report(
         self,
-        filtered_agentique:   str,
-        filtered_openclaw:    str,
-        filtered_skills:      str,
-        feedback:             str,
+        filtered_agentique: str,
+        filtered_openclaw:  str,
+        filtered_skills:    str,
+        feedback:           str,
     ) -> str:
         """
         Génère le rapport complet via Sonnet 4.6 + Extended Thinking.
 
         Analogie TP :
-            Le conducteur de travaux qui s'assoit 10 minutes avec ses notes
-            (Extended Thinking), réfléchit aux connexions entre les 3 chantiers,
-            puis rédige le compte-rendu maître d'ouvrage d'une traite.
-
-        Structure rapport v2.3 : 3 parties × (Info + Pédagogie + Système + Mise en place)
-        Cible : 6000-7000 mots au total.
+            Le conducteur de travaux qui réfléchit (Extended Thinking) puis rédige
+            le compte-rendu maître d'ouvrage d'une traite. Cible : 6000-7000 mots.
         """
-today = datetime.now().strftime("%d/%m/%Y")
+        # FIX : today correctement indenté dans la méthode
+        today = datetime.now().strftime("%d/%m/%Y")
 
         prompt = f"""Tu es VeilleurIA v2.3, expert IA agentique. Rapport quotidien pour Vlad.
 
 PROFIL : Conducteur de travaux TP → reconversion ingénieur IA agentique.
 CS50P validé + 275p ML + stack 13 agents en prod. Praticien, pas théoricien.
-OBJECTIF ACTUEL : Sortir de la stack existante pour imaginer de TOUT NOUVEAUX agents. Ne relie PAS ces nouveautés aux agents existants (Sheriff, Coder, VeilleurIA, etc.). Propose des idées de création from scratch.
+OBJECTIF : Imaginer de TOUT NOUVEAUX agents from scratch. Ne relie PAS aux agents existants.
 
 {feedback}
 
@@ -429,27 +362,24 @@ Génère EXACTEMENT ce format. Cible : 6000-7000 mots.
 2-3 news majeures : faits + pourquoi important maintenant + impact concret pour Vlad.
 
 ### 🎓 Pédagogie (400-500 mots)
-Structure OBLIGATOIRE :
 **Concept** : définition claire
 **Analogie BTP** : cas concret chantier/TP
 **Mécanisme** : comment ça marche sous le capot
-**Code** : bloc Python 15-25 lignes, commentaires PAR BLOC (pas ligne par ligne)
-**Nouvelle Application** : imagine un tout NOUVEL agent autonome qui n'existe pas encore dans ma stack, basé sur ce concept.
+**Code** : bloc Python 15-25 lignes, commentaires PAR BLOC
+**Nouvelle Application** : imagine un tout NOUVEL agent autonome basé sur ce concept
 **Ressources** : 1-2 liens concrets
 
 ### ⚙️ Système (500-600 mots)
-Config ou snippet COMPLET production-ready :
 **Architecture** : schéma ASCII si pertinent
 **Code production-ready** : complet, commenté par bloc, gestion erreurs
 **Commandes exactes** : shell/CLI dans l'ordre
 **Paramètres critiques** : valeurs, pièges, defaults dangereux
-**Architecture Nouveau Projet** : comment structurer un NOUVEL agent de A à Z utilisant ce snippet.
+**Architecture Nouveau Projet** : structurer un NOUVEL agent de A à Z avec ce snippet
 
 ### 🔗 Mise en place (200-300 mots)
-Bridge pédagogie → action concrète :
-**Idée de Nouvel Agent** : quel agent inédit je pourrais commencer à prototyper demain avec ça.
-**3 étapes concrètes** : numérotées, actionnables dès demain pour lancer ce prototype.
-**Commande de test** : valider le POC (Proof of Concept).
+**Idée de Nouvel Agent** : quel agent inédit prototyper demain
+**3 étapes concrètes** : numérotées, actionnables dès demain
+**Commande de test** : valider le POC
 
 ---
 
@@ -459,25 +389,23 @@ Bridge pédagogie → action concrète :
 Releases (numéro version exact), breaking changes, nouvelles features, CVE si applicable.
 
 ### 🎓 Pédagogie (400-500 mots)
-Structure OBLIGATOIRE :
 **Concept OpenClaw** : ce que c'est, pourquoi dans OpenClaw
 **Analogie BTP** : OPC, sous-traitants, etc.
 **Mécanisme** : agents.yaml, gateway, skills
-**Config YAML** : bloc complet commenté par bloc, production-ready
-**Cas d'usage inédit** : un nouveau type d'agent que Vlad pourrait construire avec ce composant.
+**Config YAML** : bloc complet commenté par bloc
+**Cas d'usage inédit** : nouveau type d'agent à construire avec ce composant
 **Commande déploiement** : commande exacte openclaw
 
 ### ⚙️ Système (500-600 mots)
-AgentSkill ou workflow communautaire :
 **Config YAML complète** : commentée par bloc
 **Hack communautaire** : technique + contexte
-**Intégration KVM1** : comment déployer ce nouvel outil sur le gateway Hostinger
+**Intégration KVM1** : déploiement sur le gateway Hostinger
 **Snippet Python** : si applicable, production-ready
-**Test validation** : commande pour vérifier avant push prod
+**Test validation** : commande avant push prod
 
 ### 🔗 Mise en place (200-300 mots)
-**Nouvelle piste OpenClaw** : quel nouvel agent OpenClaw imaginer avec ça.
-**3 étapes** : actionnables dès demain pour créer ce nouvel agent.
+**Nouvelle piste OpenClaw** : quel nouvel agent imaginer
+**3 étapes** : actionnables dès demain
 **Commande de test** : validation concrète
 
 ---
@@ -488,33 +416,30 @@ AgentSkill ou workflow communautaire :
 Nouveaux skills, mises à jour MCP, évolutions API Claude, discussions communautaires.
 
 ### 🎓 Pédagogie (400-500 mots)
-Structure OBLIGATOIRE :
 **Concept skill** : ce qu'est ce skill/feature, pourquoi il existe
 **Analogie BTP** : connexion terrain TP
 **Mécanisme** : comment Claude l'implémente (system prompt, tools, context)
 **Exemple config** : YAML ou Python complet, commenté par bloc
-**Nouvelle Application** : quel agent innovant créer de zéro grâce à ce skill.
+**Nouvelle Application** : quel agent innovant créer de zéro grâce à ce skill
 **Ressources** : doc Anthropic, exemples GitHub
 
 ### ⚙️ Système (500-600 mots)
-Skill production-ready :
 **Config complète** : YAML ou Python, commentée par bloc
-**Implémentation** : comment intégrer cela dans la conception d'un tout nouvel agent.
+**Implémentation** : intégration dans la conception d'un tout nouvel agent
 **Paramètres clés** : ce qui change vraiment la qualité
-**Test validation** : comment vérifier que le skill fonctionne bien
-**Optimisation coût** : si applicable, model routing intelligent
+**Test validation** : vérifier que le skill fonctionne
+**Optimisation coût** : model routing si applicable
 
 ### 🔗 Mise en place (200-300 mots)
-**Inspiration Nouveau Skill** : quel nouveau skill je devrais développer pour exploiter ça.
+**Inspiration Nouveau Skill** : quel nouveau skill développer
 **3 étapes concrètes** : numérotées, avec commandes si applicable
-**Validation** : comment mesurer que ce nouveau prototype fonctionne
+**Validation** : mesurer que le prototype fonctionne
 
 ---
 
 ## 💡 INSIGHT DU JOUR (150-200 mots)
 Connexion transversale non évidente entre les 3 parties.
 Tendance de fond. Implication stratégique pour les futurs agents de Vlad.
-Pas une conclusion générique — un vrai insight.
 
 ---
 📊 Sources : [liste clés avec URLs]
@@ -522,21 +447,20 @@ Pas une conclusion générique — un vrai insight.
 ---
 
 RÈGLES ABSOLUES :
-- Code commenté PAR BLOC (pas ligne par ligne, pas sans commentaires)
+- Code commenté PAR BLOC
 - Analogies BTP systématiques dans toutes les sections Pédagogie
-- NE PAS adapter les nouveautés à la stack V1.0 existante. L'objectif est l'idéation de nouveaux agents.
-- Jamais inventer une info — absence > inexactitude
-- Si section vide aujourd'hui : développer les autres"""
+- NE PAS adapter aux agents existants — idéation nouveaux agents uniquement
+- Jamais inventer une info — absence > inexactitude"""
 
         params: dict = {
             "model":      self.synthesis_model,
-            "max_tokens": 14000,  # thinking (3000) + output 7000 mots (~9000 tokens) + marge
+            "max_tokens": 14000,
             "messages":   [{"role": "user", "content": prompt}],
         }
         if self.use_thinking:
             params["thinking"] = {"type": "enabled", "budget_tokens": THINKING_BUDGET}
             logger.info(f"  🧠 Extended Thinking activé ({THINKING_BUDGET} tokens budget)")
-            
+
         response = self.client.messages.create(**params)
 
         # Extraire uniquement le texte final (pas les blocs thinking internes)
@@ -551,20 +475,17 @@ RÈGLES ABSOLUES :
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(min=2, max=10))
     def extract_for_notion(self, report: str, section: str) -> str:
         """
-        Haiku extrait une section spécifique du rapport pour Notion.
-        Appel par partie (1, 2, 3) pour éviter les troncatures.
+        Haiku extrait une section du rapport — 1 appel par partie pour éviter les troncatures.
 
-        Analogie TP :
-            Au lieu de photocopier tout le rapport en une fois,
-            on photocopie cahier par cahier — plus fiable.
+        Analogie TP : On photocopie cahier par cahier, pas tout le rapport d'un coup.
         """
         instructions = {
-            "pedagogie": "Extrais UNIQUEMENT la section 🎓 Pédagogie de la PARTIE {partie}. Garde le contenu intégral avec tous les blocs de code.",
-            "systeme":   "Extrais UNIQUEMENT la section ⚙️ Système de la PARTIE {partie}. Garde tous les blocs de code intacts.",
+            "pedagogie":     "Extrais UNIQUEMENT la section 🎓 Pédagogie de la PARTIE {partie}. Garde le contenu intégral avec tous les blocs de code.",
+            "systeme":       "Extrais UNIQUEMENT la section ⚙️ Système de la PARTIE {partie}. Garde tous les blocs de code intacts.",
             "mise_en_place": "Extrais UNIQUEMENT la section 🔗 Mise en place de la PARTIE {partie}. Garde les 3 étapes et la commande de validation.",
         }
 
-        # Découper le rapport en 3 parties pour cibler l'extraction
+        # Marqueurs début/fin pour localiser chaque partie dans le rapport
         parties_labels = {
             1: ("PARTIE 1", "PARTIE 2"),
             2: ("PARTIE 2", "PARTIE 3"),
@@ -574,10 +495,12 @@ RÈGLES ABSOLUES :
         full_content = []
 
         for num_partie, (start_marker, end_marker) in parties_labels.items():
-            # Extraire le segment de la partie depuis le rapport complet
+            # Localiser le segment de la partie dans le rapport
             start_idx = report.find(start_marker)
-            end_idx   = report.find(end_marker, start_idx + 1) if end_marker in report[start_idx+1:] else len(report)
-            segment   = report[start_idx:end_idx] if start_idx != -1 else ""
+            if start_idx == -1:
+                continue
+            end_idx = report.find(end_marker, start_idx + len(start_marker))
+            segment = report[start_idx:end_idx] if end_idx != -1 else report[start_idx:]
 
             if not segment.strip():
                 continue
@@ -594,31 +517,28 @@ RÈGLES ABSOLUES :
 
         return "\n\n---\n\n".join(full_content) or "Extraction vide."
 
-    # ─── Création page Notion ─────────────────────────────────────────────────
+    # ─── Parser Markdown → blocs Notion ──────────────────────────────────────
 
     def _parse_content_to_blocks(self, content: str) -> list:
         """
-        Parse le contenu Markdown en blocs Notion proprement.
+        Parse le contenu Markdown en blocs Notion ligne par ligne.
 
-        Analogie TP :
-            Trier les matériaux avant de les ranger : béton avec béton,
-            ferraillage avec ferraillage. On ne mélange pas les types.
+        Analogie TP : Trier béton/ferraillage avant de ranger — pas de mélange.
 
-        Le problème du split naïf sur '\\n\\n' :
-            Un bloc ```python\\ncode\\n``` contient des sauts de ligne
-            internes → le split le découpe en morceaux inutilisables.
-        Solution : on parse ligne par ligne avec un état (dans/hors code).
+        Pourquoi ligne par ligne et pas split('\\n\\n') :
+            Les blocs ```code``` contiennent des sauts de ligne internes
+            que le split naïf découpe en morceaux inutilisables.
         """
         blocks = []
-        lines = content.split("\n")
-        i = 0
+        lines  = content.split("\n")
+        i      = 0
 
         while i < len(lines):
             line = lines[i]
 
-            # ── Bloc de code : on accumule jusqu'au ``` fermant ──────────
+            # ── Bloc de code : accumulation jusqu'au ``` fermant ─────────
             if line.strip().startswith("```"):
-                lang = line.strip().replace("```", "").strip() or "python"
+                lang       = line.strip().replace("```", "").strip() or "python"
                 code_lines = []
                 i += 1
                 while i < len(lines) and not lines[i].strip().startswith("```"):
@@ -626,59 +546,45 @@ RÈGLES ABSOLUES :
                     i += 1
                 code = "\n".join(code_lines).strip()
                 if code:
-                    # Découpe si > 1990 chars (limite Notion par bloc)
+                    valid_langs = ["python", "javascript", "bash", "yaml", "json", "markdown", "plain text"]
                     for chunk in [code[j:j+1990] for j in range(0, len(code), 1990)]:
                         blocks.append({
-                            "object": "block",
-                            "type":   "code",
+                            "object": "block", "type": "code",
                             "code": {
                                 "rich_text": [{"type": "text", "text": {"content": chunk}}],
-                                "language":  lang if lang in [
-                                    "python", "javascript", "bash", "yaml",
-                                    "json", "markdown", "plain text"
-                                ] else "plain text",
+                                "language":  lang if lang in valid_langs else "plain text",
                             },
                         })
                 i += 1  # saute le ``` fermant
                 continue
 
-            # ── Titre niveau 1 (#) ────────────────────────────────────────
+            # ── Titre # ───────────────────────────────────────────────────
             if line.startswith("# ") and not line.startswith("## "):
                 blocks.append({
                     "object": "block", "type": "heading_1",
-                    "heading_1": {"rich_text": [{"type": "text", "text": {
-                        "content": line.replace("# ", "")[:200]
-                    }}]},
+                    "heading_1": {"rich_text": [{"type": "text", "text": {"content": line[2:][:200]}}]},
                 })
-                i += 1
-                continue
+                i += 1; continue
 
-            # ── Titre niveau 2 (##) ───────────────────────────────────────
+            # ── Titre ## ──────────────────────────────────────────────────
             if line.startswith("## "):
                 blocks.append({
                     "object": "block", "type": "heading_2",
-                    "heading_2": {"rich_text": [{"type": "text", "text": {
-                        "content": line.replace("## ", "")[:200]
-                    }}]},
+                    "heading_2": {"rich_text": [{"type": "text", "text": {"content": line[3:][:200]}}]},
                 })
-                i += 1
-                continue
+                i += 1; continue
 
-            # ── Titre niveau 3 (###) ──────────────────────────────────────
+            # ── Titre ### ─────────────────────────────────────────────────
             if line.startswith("### "):
                 blocks.append({
                     "object": "block", "type": "heading_3",
-                    "heading_3": {"rich_text": [{"type": "text", "text": {
-                        "content": line.replace("### ", "")[:200]
-                    }}]},
+                    "heading_3": {"rich_text": [{"type": "text", "text": {"content": line[4:][:200]}}]},
                 })
-                i += 1
-                continue
+                i += 1; continue
 
-            # ── Ligne vide → on skippe ────────────────────────────────────
+            # ── Ligne vide → skip ─────────────────────────────────────────
             if not line.strip():
-                i += 1
-                continue
+                i += 1; continue
 
             # ── Paragraphe standard ───────────────────────────────────────
             for chunk in [line[j:j+1990] for j in range(0, len(line), 1990)]:
@@ -690,6 +596,8 @@ RÈGLES ABSOLUES :
 
         return blocks
 
+    # ─── Création page Notion ─────────────────────────────────────────────────
+
     def create_notion_page(
         self,
         database_id: str,
@@ -699,92 +607,38 @@ RÈGLES ABSOLUES :
     ) -> Optional[str]:
         """
         Crée une sous-page dans une page Notion parente.
+        Envoie le contenu par batch de 100 blocs (limite API Notion).
 
         Analogie TP :
-            Ajouter une feuille dans le bon classeur avec le bon onglet.
-
-        Args:
-            database_id : ID de la page Notion parente
-            title       : Titre de la page
-            content     : Contenu Markdown à insérer
-            categorie   : Non utilisé (pages simples)
-
-        Returns:
-            URL de la page créée, ou None si erreur
+            Livrer le béton en plusieurs camions toupie —
+            Notion ne peut recevoir que 100 blocs par livraison.
         """
         if not self.notion or not database_id:
             logger.warning(f"  ⚠️  Notion non disponible pour '{title}'")
             return None
 
         try:
-            # Découpage du contenu en blocs Notion
-            content_blocks = []
-            for paragraph in content.split("\n\n"):
-                if not paragraph.strip():
-                    continue
-                # Bloc code si commence par ```
-                if paragraph.strip().startswith("```"):
-                    lang = paragraph.split("\n")[0].replace("```", "").strip() or "python"
-                    code = "\n".join(paragraph.split("\n")[1:]).rstrip("`").strip()
-                    content_blocks.append({
-                        "object": "block",
-                        "type":   "code",
-                        "code":   {
-                            "rich_text": [{"type": "text", "text": {"content": code[:1990]}}],
-                            "language":  lang,
-                        },
-                    })
-                elif paragraph.startswith("## "):
-                    content_blocks.append({
-                        "object": "block",
-                        "type":   "heading_2",
-                        "heading_2": {
-                            "rich_text": [{"type": "text", "text": {
-                                "content": paragraph.replace("## ", "")[:200]
-                            }}]
-                        },
-                    })
-                elif paragraph.startswith("### "):
-                    content_blocks.append({
-                        "object": "block",
-                        "type":   "heading_3",
-                        "heading_3": {
-                            "rich_text": [{"type": "text", "text": {
-                                "content": paragraph.replace("### ", "")[:200]
-                            }}]
-                        },
-                    })
-                else:
-                    for chunk in [paragraph[i:i+1990] for i in range(0, len(paragraph), 1990)]:
-                        content_blocks.append({
-                            "object": "block",
-                            "type":   "paragraph",
-                            "paragraph": {
-                                "rich_text": [{"type": "text", "text": {"content": chunk}}]
-                            },
-                        })
-
-            # Création de la page avec les 100 premiers blocs
+            # Parser le Markdown en blocs Notion
             all_blocks = self._parse_content_to_blocks(content)
-            page = self.notion.pages.create(
-                parent={"page_id": database_id},
-                properties={
-                    "title": {"title": [{"text": {"content": title}}]}
-                },
-                children=all_blocks[:100],
+
+            # Création initiale avec les 100 premiers blocs
+            page    = self.notion.pages.create(
+                parent     = {"page_id": database_id},
+                properties = {"title": {"title": [{"text": {"content": title}}]}},
+                children   = all_blocks[:100],
             )
             page_id = page.get("id", "")
             url     = page.get("url", "")
 
-            # Append les blocs restants par batch de 100
-            # Notion limite à 100 blocs par appel API
+            # Append des blocs restants par batch de 100
             remaining = all_blocks[100:]
             while remaining:
                 self.notion.blocks.children.append(
-                    block_id=page_id,
-                    children=remaining[:100],
+                    block_id = page_id,
+                    children = remaining[:100],
                 )
                 remaining = remaining[100:]
+
             logger.info(f"  ✅ Notion page créée : {title} → {url}")
             return url
 
@@ -792,37 +646,29 @@ RÈGLES ABSOLUES :
             logger.error(f"  ❌ Notion erreur ({title}) : {e}")
             return None
 
-    # ─── Envoi notification Telegram ─────────────────────────────────────────
+    # ─── Notification Telegram ────────────────────────────────────────────────
 
     async def send_telegram_notification(self, notion_url: str, today: str) -> bool:
         """
         Envoie une notification courte sur Telegram avec le lien Notion.
 
-        Analogie TP :
-            Le SMS au maître d'ouvrage : "Rapport chantier dispo, voir classeur bureau."
-            Pas le rapport complet par SMS — juste la notification.
+        Analogie TP : Le SMS au maître d'ouvrage "rapport dispo, voir classeur".
         """
         try:
             import telegram
             bot     = telegram.Bot(token=os.getenv("TELEGRAM_BOT_TOKEN"))
             chat_id = os.getenv("TELEGRAM_CHAT_ID")
 
-            # Message court et lisible — le rapport est sur Notion
             message = (
                 f"📋 *VeilleurIA — {today}*\n\n"
                 f"Ton rapport quotidien est prêt ✅\n\n"
                 f"🧠 Agentique · 🦞 OpenClaw · 🛠️ Skills Claude\n\n"
                 f"👉 [Lire le rapport]({notion_url})"
                 if notion_url else
-                f"📋 *VeilleurIA — {today}*\n\n"
-                f"Rapport généré ✅ — consulte Notion pour le lire."
+                f"📋 *VeilleurIA — {today}*\n\nRapport généré ✅ — consulte Notion."
             )
 
-            await bot.send_message(
-                chat_id=chat_id,
-                text=message,
-                parse_mode="Markdown",
-            )
+            await bot.send_message(chat_id=chat_id, text=message, parse_mode="Markdown")
             logger.info("  ✅ Notification Telegram envoyée")
             return True
         except Exception as e:
@@ -852,14 +698,13 @@ RÈGLES ABSOLUES :
         """
         Pipeline complet v2.3 — 7 étapes.
 
-        Étapes :
-            1. Collecte RSS (10 sources + 2 Skills Claude)
-            2. Résumé brut RSS × 3 parties (Haiku)
-            3. Recherche web 12 requêtes × 3 parties (Sonnet 4.6)
-            4. Passe critique × 3 parties (Haiku)
-            5. Synthèse rapport 3 parties (Sonnet 4.6 + Extended Thinking)
-            6. Redistribution Notion × 4 bases (Haiku)
-            7. Notification Telegram (lien Notion)
+        1. Collecte RSS     → 10 sources + Reddit
+        2. Résumé RSS       → Haiku × 3 parties
+        3. Recherche web    → Sonnet 4.6 × 12 requêtes
+        4. Passe critique   → Haiku × 3 parties
+        5. Synthèse rapport → Sonnet 4.6 + Extended Thinking
+        6. Redistribution   → Notion × 4 bases (Haiku extraction)
+        7. Notification     → Telegram avec lien Notion
         """
         if LOCK_FILE.exists() and not self.test_mode:
             logger.warning("⚠️  Lock file présent — pipeline déjà en cours ?")
@@ -874,7 +719,7 @@ RÈGLES ABSOLUES :
             logger.info("=" * 64)
 
             # ── [1/7] Collecte RSS ─────────────────────────────────────────
-            logger.info("📡 [1/7] Collecte RSS (10 sources + Reddit)...")
+            logger.info("📡 [1/7] Collecte RSS...")
             rss_agentique = self.collect_rss(RSS_AGENTIQUE)
             rss_openclaw  = self.collect_rss(RSS_OPENCLAW)
             rss_skills    = self.collect_rss(RSS_SKILLS_CLAUDE)
@@ -907,63 +752,51 @@ RÈGLES ABSOLUES :
                 feedback           = feedback,
             )
 
-            # Archivage local toujours
+            # Archivage local
             report_path = Path(f"rapports/rapport_{datetime.now().strftime('%Y%m%d')}.md")
             report_path.parent.mkdir(exist_ok=True)
             report_path.write_text(report, encoding="utf-8")
-            logger.info(f"  💾 Rapport archivé localement : {report_path}")
+            logger.info(f"  💾 Rapport archivé : {report_path}")
 
-            # Mode dry-run : affichage terminal uniquement
+            # Mode dry-run : affichage terminal uniquement, pas Notion/Telegram
             if self.dry_run:
                 print("\n" + "=" * 64)
-                print("📋 RAPPORT v2.3 (dry-run — Notion et Telegram désactivés)")
+                print("📋 RAPPORT v2.3 (dry-run)")
                 print("=" * 64)
                 print(report)
-                print("=" * 64)
                 return 0
 
             # ── [6/7] Redistribution Notion ───────────────────────────────
             logger.info("📚 [6/7] Redistribution vers Notion (4 bases)...")
             notion_rapport_url = None
 
-            # Base Rapports — rapport complet
             if NOTION_DB_RAPPORTS:
                 notion_rapport_url = self.create_notion_page(
                     database_id = NOTION_DB_RAPPORTS,
                     title       = f"Veille IA — {today}",
                     content     = report,
                 )
-
-            # Extraction et insertion Pédagogie
             if NOTION_DB_PEDAGOGIE:
-                pedagogie_content = self.extract_for_notion(report, "pedagogie")
                 self.create_notion_page(
                     database_id = NOTION_DB_PEDAGOGIE,
                     title       = f"Pédagogie — {today}",
-                    content     = pedagogie_content,
+                    content     = self.extract_for_notion(report, "pedagogie"),
                 )
-
-            # Extraction et insertion Système
             if NOTION_DB_SYSTEME:
-                systeme_content = self.extract_for_notion(report, "systeme")
                 self.create_notion_page(
                     database_id = NOTION_DB_SYSTEME,
                     title       = f"Système — {today}",
-                    content     = systeme_content,
+                    content     = self.extract_for_notion(report, "systeme"),
                 )
-
-            # Extraction et insertion Mise en place
             if NOTION_DB_MISE_EN_PLACE:
-                mep_content = self.extract_for_notion(report, "mise_en_place")
                 self.create_notion_page(
                     database_id = NOTION_DB_MISE_EN_PLACE,
                     title       = f"Mise en place — {today}",
-                    content     = mep_content,
+                    content     = self.extract_for_notion(report, "mise_en_place"),
                 )
 
             # ── [7/7] Notification Telegram ───────────────────────────────
             logger.info("📤 [7/7] Notification Telegram...")
-            import asyncio
             asyncio.run(self.send_telegram_notification(
                 notion_url = notion_rapport_url or "",
                 today      = today,
@@ -988,14 +821,14 @@ def main() -> int:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Exemples :
-    python agent_veilleur_ia_v2_3.py                         # Production
-    python agent_veilleur_ia_v2_3.py --test                  # Haiku partout, rapide
-    python agent_veilleur_ia_v2_3.py --dry-run               # Terminal, pas Notion
+    python agent_veilleur_ia_v2_3.py                           # Production
+    python agent_veilleur_ia_v2_3.py --test                    # Thinking off, rapide
+    python agent_veilleur_ia_v2_3.py --dry-run                 # Terminal, pas Notion
     python agent_veilleur_ia_v2_3.py --feedback like "Super section Skills Claude"
         """,
     )
-    parser.add_argument("--test",    action="store_true", help="Haiku partout, thinking off")
-    parser.add_argument("--dry-run", action="store_true", help="Rapport terminal, pas Notion/Telegram")
+    parser.add_argument("--test",     action="store_true", help="Thinking off, rapide")
+    parser.add_argument("--dry-run",  action="store_true", help="Rapport terminal, pas Notion/Telegram")
     parser.add_argument("--feedback", nargs=2, metavar=("TYPE", "NOTE"),
                         help="like | dislike | note 'texte'")
     args = parser.parse_args()
