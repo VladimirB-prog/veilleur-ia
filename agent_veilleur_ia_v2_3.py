@@ -593,9 +593,10 @@ RÈGLES ABSOLUES :
                 code_lines = []
                 i += 1
                 while i < len(lines) and not lines[i].strip().startswith("```"):
-                    # Sortir du bloc code si on rencontre un titre Markdown
-                    # Sonnet oublie parfois de fermer ``` avant un nouveau titre
-                    if lines[i].startswith(("## ", "### ", "# ", "---")):
+                    # Sortir du bloc code si on rencontre un titre ## ou ###
+                    # Ces marqueurs ne peuvent jamais apparaître dans du vrai code
+                    # On exclut # seul (commentaires Python) et --- (séparateurs bash)
+                    if lines[i].startswith(("## ", "### ")):
                         logger.warning(f"  🔧 Titre détecté dans bloc code ligne {i} — fermeture forcée")
                         break
                     code_lines.append(lines[i])
