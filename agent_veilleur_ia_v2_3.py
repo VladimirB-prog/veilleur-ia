@@ -575,7 +575,12 @@ RÈGLES ABSOLUES :
                                 "language":  lang if lang in valid_langs else "plain text",
                             },
                         })
-                i += 1  # saute le ``` fermant
+                # Saute le ``` fermant seulement s'il existe
+                # Si EOF atteint = bloc non fermé dans le rapport Sonnet
+                if i < len(lines) and lines[i].strip().startswith("```"):
+                    i += 1
+                else:
+                    logger.warning(f"  ⚠️  Bloc code non fermé (lang={lang}) — {len(code_lines)} lignes récupérées quand même")
                 continue
 
             # ── Titre # ───────────────────────────────────────────────────
