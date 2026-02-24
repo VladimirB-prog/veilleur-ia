@@ -539,6 +539,34 @@ RÈGLES ABSOLUES :
 
     # ─── Parser Markdown → blocs Notion ──────────────────────────────────────
 
+    def _fix_unclosed_code_blocks(self, text: str) -> str:
+        """
+        Répare les blocs de code non fermés dans le rapport Sonnet.
+
+        Analogie TP :
+            Vérifier que chaque coffrage ouvert est bien refermé avant
+            de couler le béton — sinon tout déborde.
+
+        Sonnet génère parfois un ``` sans ``` fermant correspondant.
+        Tout le texte suivant se retrouve aspiré dans un bloc code géant.
+        Ce pre-processing compte les backticks et ferme les blocs orphelins.
+        """
+        lines   = text.split("\n")
+        in_code = False
+        result  = []
+
+        for line in lines:
+            if line.strip().startswith("```"):
+                in_code = not in_code
+            result.append(line)
+
+        # Si on termine encore dans un bloc code → ajouter le ``` fermant
+        if in_code:
+            result.append("```")
+            logger.warning("  🔧 Bloc code non fermé réparé automatiquement")
+
+        return "\n".join(result)
+
     def _parse_content_to_blocks(self, content: str) -> list:
         """
         Parse le contenu Markdown en blocs Notion ligne par ligne.
@@ -549,6 +577,9 @@ RÈGLES ABSOLUES :
             Les blocs ```code``` contiennent des sauts de ligne internes
             que le split naïf découpe en morceaux inutilisables.
         """
+        # Réparer les blocs code non fermés avant de parser
+        content = self._fix_unclosed_code_blocks(content)
+
         blocks = []
         lines  = content.split("\n")
         i      = 0
