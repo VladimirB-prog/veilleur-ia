@@ -472,50 +472,70 @@ RÈGLES ABSOLUES :
 
     # ─── Redistribution Notion via Haiku ──────────────────────────────────────
 
-    @retry(stop=stop_after_attempt(3), wait=wait_exponential(min=2, max=10))
     def extract_for_notion(self, report: str, section: str) -> str:
         """
-        Haiku extrait une section du rapport — 1 appel par partie pour éviter les troncatures.
+        Extrait une section du rapport par string slicing direct — sans LLM.
 
-        Analogie TP : On photocopie cahier par cahier, pas tout le rapport d'un coup.
+        Analogie TP :
+            Au lieu de demander à un ouvrier de recopier les pages,
+            on les découpe directement au cutter. Plus rapide, aucune perte.
+
+        Avantages vs extraction Haiku :
+            - Zéro token consommé
+            - Zéro troncature possible — contenu garanti complet
+            - Instantané
         """
-        instructions = {
-            "pedagogie":     "Extrais UNIQUEMENT la section 🎓 Pédagogie de la PARTIE {partie}. Garde le contenu intégral avec tous les blocs de code.",
-            "systeme":       "Extrais UNIQUEMENT la section ⚙️ Système de la PARTIE {partie}. Garde tous les blocs de code intacts.",
-            "mise_en_place": "Extrais UNIQUEMENT la section 🔗 Mise en place de la PARTIE {partie}. Garde les 3 étapes et la commande de validation.",
+        # Marqueurs de section correspondant aux titres générés par Sonnet
+        section_markers = {
+            "pedagogie":     "### 🎓 Pédagogie",
+            "systeme":       "### ⚙️ Système",
+            "mise_en_place": "### 🔗 Mise en place",
         }
 
-        # Marqueurs début/fin pour localiser chaque partie dans le rapport
-        parties_labels = {
-            1: ("PARTIE 1", "PARTIE 2"),
-            2: ("PARTIE 2", "PARTIE 3"),
-            3: ("PARTIE 3", "INSIGHT DU JOUR"),
-        }
+        # Tous les marqueurs de sous-section pour délimiter la fin d'une section
+        all_subsection_markers = [
+            "### 📰 Information",
+            "### 🎓 Pédagogie",
+            "### ⚙️ Système",
+            "### 🔗 Mise en place",
+            "## 🧠 PARTIE",
+            "## 🦞 PARTIE",
+            "## 🛠️ PARTIE",
+            "## 💡 INSIGHT",
+        ]
 
+        start_marker = section_markers[section]
         full_content = []
+        partie_num   = 0
+        search_from  = 0
 
-        for num_partie, (start_marker, end_marker) in parties_labels.items():
-            # Localiser le segment de la partie dans le rapport
-            start_idx = report.find(start_marker)
+        # Chercher toutes les occurrences du marqueur (une par partie)
+        while True:
+            start_idx = report.find(start_marker, search_from)
             if start_idx == -1:
-                continue
-            end_idx = report.find(end_marker, start_idx + len(start_marker))
-            segment = report[start_idx:end_idx] if end_idx != -1 else report[start_idx:]
+                break
 
-            if not segment.strip():
-                continue
+            partie_num += 1
 
-            response = self.client.messages.create(
-                model=self.collect_model,
-                max_tokens=2000,
-                messages=[{"role": "user", "content":
-                    f"{instructions[section].format(partie=num_partie)}\n\n"
-                    f"SEGMENT PARTIE {num_partie} :\n{segment[:15000]}"
-                }],
-            )
-            full_content.append(f"## Partie {num_partie}\n\n{response.content[0].text}")
+            # Trouver la fin = prochain marqueur de sous-section
+            end_idx = len(report)
+            for marker in all_subsection_markers:
+                pos = report.find(marker, start_idx + len(start_marker))
+                if pos != -1 and pos < end_idx:
+                    end_idx = pos
 
-        return "\n\n---\n\n".join(full_content) or "Extraction vide."
+            section_content = report[start_idx:end_idx].strip()
+            if section_content:
+                full_content.append(f"## Partie {partie_num}\n\n{section_content}")
+
+            search_from = start_idx + len(start_marker)
+
+        if not full_content:
+            logger.warning(f"  ⚠️  Aucune section '{section}' trouvée dans le rapport")
+            return "Section non trouvée dans le rapport."
+
+        logger.info(f"  ✂️  Extraction '{section}' : {len(full_content)} parties trouvées")
+        return "\n\n---\n\n".join(full_content)
 
     # ─── Parser Markdown → blocs Notion ──────────────────────────────────────
 
