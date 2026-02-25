@@ -310,6 +310,44 @@ Format : 1. [SOURCE] Titre — impact en une phrase (5 max, triés par importanc
             logger.warning(f"⚠️  Feedback : {e}")
             return "Erreur chargement feedback."
 
+    # ─── Requêtes web dynamiques ──────────────────────────────────────────────
+
+    def _build_daily_queries(self) -> tuple[list[str], list[str], list[str]]:
+        """
+        Génère des requêtes web datées au jour près pour obtenir des résultats
+        différents chaque jour.
+
+        Problème sans cette méthode : les constantes statiques (QUERIES_*)
+        contiennent juste "2026" — le moteur retourne les mêmes pages en cache.
+
+        Analogie TP : Chaque matin le chef de chantier note la date du jour sur
+        sa liste de points à vérifier — sinon l'ouvrier ramène les mêmes fiches
+        d'hier.
+        """
+        today     = datetime.now()
+        date_full = today.strftime("%B %d %Y")   # "February 25 2026"
+        month_yr  = today.strftime("%B %Y")       # "February 2026"
+
+        agentique = [
+            f"agentic AI framework announcement {date_full}",
+            f"LangGraph CrewAI AutoGen new release {month_yr}",
+            f"Claude MCP A2A protocol update {date_full}",
+            f"agentic AI multi-agent paper arxiv {date_full}",
+            f"LLM agent benchmark comparison {month_yr}",
+            f"AI agent security vulnerability CVE {month_yr}",
+        ]
+        openclaw = [
+            f"OpenClaw agent framework update {date_full}",
+            f"OpenClaw community discussion workflow {month_yr}",
+            f"ClawHub AgentSkill new release {month_yr}",
+        ]
+        skills_claude = [
+            f"Claude API MCP tool new release {date_full}",
+            f"Anthropic Claude feature update {date_full}",
+            f"Claude skill builder best practices production {month_yr}",
+        ]
+        return agentique, openclaw, skills_claude
+
     # ─── Synthèse rapport Sonnet 4.6 + Extended Thinking ─────────────────────
 
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(min=2, max=10))
@@ -454,7 +492,7 @@ RÈGLES ABSOLUES :
 
         params: dict = {
             "model":      self.synthesis_model,
-            "max_tokens": 16000,
+            "max_tokens": 24000,  # 16000 était insuffisant : thinking (3000) + 3 parties complètes ≈ 22-23k tokens
             "messages":   [{"role": "user", "content": prompt}],
         }
         if self.use_thinking:
@@ -775,10 +813,11 @@ RÈGLES ABSOLUES :
             sum_skills    = self.summarize_rss(rss_skills,    "skills Claude")
 
             # ── [3/7] Recherche web Sonnet ─────────────────────────────────
-            logger.info("🔍 [3/7] Recherche web Sonnet 4.6 (12 requêtes)...")
-            web_agentique = self.search_web(QUERIES_AGENTIQUE, "agentique")
-            web_openclaw  = self.search_web(QUERIES_OPENCLAW,  "openclaw")
-            web_skills    = self.search_web(QUERIES_SKILLS_CLAUDE, "skills Claude")
+            logger.info("🔍 [3/7] Recherche web Sonnet 4.6 (12 requêtes datées)...")
+            q_agentique, q_openclaw, q_skills = self._build_daily_queries()
+            web_agentique = self.search_web(q_agentique, "agentique")
+            web_openclaw  = self.search_web(q_openclaw,  "openclaw")
+            web_skills    = self.search_web(q_skills,    "skills Claude")
 
             # ── [4/7] Passe critique Haiku ─────────────────────────────────
             logger.info("🎯 [4/7] Passe critique Haiku (3 parties)...")
