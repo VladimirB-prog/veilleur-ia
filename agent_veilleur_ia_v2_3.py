@@ -492,7 +492,7 @@ RÈGLES ABSOLUES :
 
         params: dict = {
         "model":      self.synthesis_model,
-        "max_tokens": 12000,  # thinking (3000) + rapport (9000) avec marge
+        "max_tokens": 16000,  # thinking (3000) + rapport (13000) avec marge
         "messages":   [{"role": "user", "content": prompt}],
     }
     if self.use_thinking:
