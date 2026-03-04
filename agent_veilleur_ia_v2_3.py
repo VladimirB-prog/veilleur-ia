@@ -491,22 +491,18 @@ RÈGLES ABSOLUES :
 - Jamais inventer une info — absence > inexactitude"""
 
         params: dict = {
-            "model":      self.synthesis_model,
-            "max_tokens": 24000,  # 16000 était insuffisant : thinking (3000) + 3 parties complètes ≈ 22-23k tokens
-            "messages":   [{"role": "user", "content": prompt}],
-        }
-        if self.use_thinking:
-            params["thinking"] = {"type": "enabled", "budget_tokens": THINKING_BUDGET}
-            logger.info(f"  🧠 Extended Thinking activé ({THINKING_BUDGET} tokens budget)")
+        "model":      self.synthesis_model,
+        "max_tokens": 12000,  # thinking (3000) + rapport (9000) avec marge
+        "messages":   [{"role": "user", "content": prompt}],
+    }
+    if self.use_thinking:
+        params["thinking"] = {"type": "enabled", "budget_tokens": THINKING_BUDGET}
+        logger.info(f"  🧠 Extended Thinking activé ({THINKING_BUDGET} tokens budget)")
 
-        response = self.client.messages.create(**params)
+    with self.client.messages.stream(**params) as stream:
+        report = stream.get_final_text()
 
-        # Extraire uniquement le texte final (pas les blocs thinking internes)
-        report = "".join(
-            b.text for b in response.content
-            if hasattr(b, "type") and b.type == "text"
-        )
-        return report or "Erreur génération rapport."
+    return report or "Erreur génération rapport."
 
     # ─── Redistribution Notion via Haiku ──────────────────────────────────────
 
